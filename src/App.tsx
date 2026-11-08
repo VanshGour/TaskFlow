@@ -1,10 +1,11 @@
 
-import { useReducer, useState } from 'react'
+import { useReducer, useState, useEffect } from 'react'
 import type { FormEvent, DragEvent } from 'react'
 import './App.css'
 
 import type { Task, TaskStatus } from './types'
 import { taskReducer } from './taskReducer'
+import { getTasks, saveTasks } from './db'
 
 // Initial Tasks
 
@@ -344,12 +345,65 @@ function App() {
   const [state, dispatch] = useReducer(taskReducer, {
     tasks: initialTasks
   })
+  const [isLoaded, setIsLoaded] = useState(false)
 
   const [showModal, setShowModal] = useState(false)
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
 
   const [syncing, setSyncing] = useState(false)
+
+  // Load tasks from IndexedDB when the app starts
+useEffect(() => {
+  let cancelled = false
+
+  async function loadTasks() {
+    try {
+      const savedTasks = await getTasks()
+
+      let tasksToLoad = savedTasks
+
+      // Add demo tasks only on the first launch
+      if (
+        savedTasks.length === 0 &&
+        localStorage.getItem('taskflow-initialized') !== 'true'
+      ) {
+        tasksToLoad = initialTasks
+        await saveTasks(initialTasks)
+        localStorage.setItem('taskflow-initialized', 'true')
+      }
+
+      if (!cancelled) {
+        dispatch({
+          type: 'RESTORE_STATE',
+          payload: { tasks: tasksToLoad }
+        })
+
+        setIsLoaded(true)
+      }
+    } catch (error) {
+      console.error('Failed to load tasks:', error)
+      if (!cancelled) {
+        setIsLoaded(true)
+      }
+    }
+  }
+
+  loadTasks()
+
+  return () => {
+    cancelled = true
+  }
+}, [])
+
+// Automatically save tasks whenever they change
+useEffect(() => {
+  if (!isLoaded) return
+
+  saveTasks(state.tasks).catch(error => {
+    console.error('Failed to save tasks:', error)
+  })
+}, [state.tasks, isLoaded])
 
   // Add or Edit Task
 

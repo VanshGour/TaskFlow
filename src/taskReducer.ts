@@ -16,6 +16,7 @@ export type TaskAction =
   | { type: 'RESTORE_STATE'; payload: TaskState }
 
 export function taskReducer(
+  
   state: TaskState,
   action: TaskAction
 ): TaskState {
@@ -58,6 +59,9 @@ export function taskReducer(
 
     case 'RESTORE_STATE':
       return action.payload
+
+      case 'RESTORE_STATE':
+  return action.payload
 
     default:
       return state
