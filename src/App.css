@@ -34,7 +34,7 @@ body {
 
 /* Toast Notifications */
 .toast-notification {
-  /* position: fixed; */
+  position: fixed;
   bottom: 24px;
   right: 24px;
   background: #252b42;
