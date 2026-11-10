@@ -1,4 +1,3 @@
-
 import type { Task, TaskStatus } from './types'
 
 export interface TaskState {
@@ -16,35 +15,28 @@ export type TaskAction =
   | { type: 'RESTORE_STATE'; payload: TaskState }
 
 export function taskReducer(
-  
   state: TaskState,
   action: TaskAction
 ): TaskState {
-
   switch (action.type) {
-
     case 'ADD_TASK':
       return {
         ...state,
-        tasks: [...state.tasks, action.payload]
+        tasks: [...state.tasks, action.payload],
       }
 
     case 'EDIT_TASK':
       return {
         ...state,
         tasks: state.tasks.map(task =>
-          task.id === action.payload.id
-            ? action.payload
-            : task
-        )
+          task.id === action.payload.id ? action.payload : task
+        ),
       }
 
     case 'DELETE_TASK':
       return {
         ...state,
-        tasks: state.tasks.filter(
-          task => task.id !== action.payload
-        )
+        tasks: state.tasks.filter(task => task.id !== action.payload),
       }
 
     case 'MOVE_TASK':
@@ -54,14 +46,13 @@ export function taskReducer(
           task.id === action.payload.id
             ? { ...task, status: action.payload.status }
             : task
-        )
+        ),
       }
 
     case 'RESTORE_STATE':
-      return action.payload
-
-      case 'RESTORE_STATE':
-  return action.payload
+      return {
+        tasks: [...action.payload.tasks],
+      }
 
     default:
       return state

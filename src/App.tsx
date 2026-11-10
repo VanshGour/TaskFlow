@@ -1,13 +1,17 @@
-
-import { useReducer, useState, useEffect } from 'react'
-import type { FormEvent, DragEvent } from 'react'
+import { useEffect, useReducer, useRef, useState, useCallback } from 'react'
+import type { DragEvent } from 'react'
 import './App.css'
-
 import type { Task, TaskStatus } from './types'
 import { taskReducer } from './taskReducer'
 import { getTasks, saveTasks } from './db'
+import socket, { type ConnectionState } from './socket'
 
-// Initial Tasks
+import { Sidebar } from './components/Sidebar'
+import { Header } from './components/Header'
+import { Column } from './components/Column'
+import { TaskModal } from './components/TaskModal'
+import { ShortcutsModal } from './components/ShortcutsModal'
+import { LiveAnnouncer } from './components/LiveAnnouncer'
 
 const initialTasks: Task[] = [
   {
@@ -16,7 +20,7 @@ const initialTasks: Task[] = [
     description: 'Create a clean and responsive login interface.',
     priority: 'High',
     date: 'Nov 10',
-    status: 'todo'
+    status: 'todo',
   },
   {
     id: 2,
@@ -24,7 +28,7 @@ const initialTasks: Task[] = [
     description: 'Organize components and folders.',
     priority: 'Medium',
     date: 'Nov 11',
-    status: 'todo'
+    status: 'todo',
   },
   {
     id: 3,
@@ -32,7 +36,7 @@ const initialTasks: Task[] = [
     description: 'Prepare the initial README.',
     priority: 'Low',
     date: 'Nov 13',
-    status: 'todo'
+    status: 'progress',
   },
   {
     id: 4,
@@ -40,636 +44,401 @@ const initialTasks: Task[] = [
     description: 'Create the main Kanban dashboard.',
     priority: 'High',
     date: 'Nov 09',
-    status: 'progress'
+    status: 'progress',
   },
   {
     id: 5,
     title: 'Design task cards',
     description: 'Create reusable task card layouts.',
     priority: 'Medium',
-    date: 'Nov 10',
-    status: 'progress'
+    date: 'Nov 14',
+    status: 'progress',
   },
   {
     id: 6,
-    title: 'Initialize React project',
-    description: 'Setup React using Vite.',
+    title: 'Configure service worker & offline DB',
+    description: 'Cache assets and persist state in IndexedDB.',
     priority: 'Low',
-    date: 'Nov 07',
-    status: 'done'
-  }
+    date: 'Nov 15',
+    status: 'done',
+  },
 ]
 
-// Task Card Component
-
-interface TaskCardProps {
-  task: Task
-  onEdit: (task: Task) => void
-  onDelete: (id: number) => void
-}
-
-function TaskCard({
-  task,
-  onEdit,
-  onDelete
-}: TaskCardProps) {
-
-  function handleDragStart(e: DragEvent<HTMLDivElement>) {
-    e.dataTransfer.setData('taskId', String(task.id))
-    e.dataTransfer.effectAllowed = 'move'
-  }
-
-  return (
-    <div
-      className="task-card"
-      draggable
-      onDragStart={handleDragStart}
-    >
-      <div className="task-top">
-
-        <span className={`priority ${task.priority.toLowerCase()}`}>
-          {task.priority}
-        </span>
-
-        <div className="task-actions">
-
-          <button
-            className="edit-btn"
-            onClick={() => onEdit(task)}
-          >
-            Edit
-          </button>
-
-          <button
-            className="delete-btn"
-            onClick={() => {
-              if (window.confirm('Delete this task?')) {
-                onDelete(task.id)
-              }
-            }}
-          >
-            Delete
-          </button>
-
-        </div>
-      </div>
-
-      <h3>{task.title}</h3>
-
-      <p>{task.description}</p>
-
-      <div className="task-footer">
-        <span>📅 {task.date}</span>
-        <span className="avatar">VG</span>
-      </div>
-
-    </div>
-  )
-}
-
-// Column Component
-
-interface ColumnProps {
-  title: string
-  items: Task[]
-  color: string
-  status: TaskStatus
-  onEdit: (task: Task) => void
-  onDelete: (id: number) => void
-  onMove: (id: number, status: TaskStatus) => void
-}
-
-function Column({
-  title,
-  items,
-  color,
-  status,
-  onEdit,
-  onDelete,
-  onMove
-}: ColumnProps) {
-
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault()
-
-    const taskId = Number(
-      e.dataTransfer.getData('taskId')
-    )
-
-    if (taskId) {
-      onMove(taskId, status)
-    }
-  }
-
-  return (
-    <div
-      className="column"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-    >
-
-      <div className="column-heading">
-
-        <div className="column-title">
-
-          <span className={`status-dot ${color}`}></span>
-
-          <h2>{title}</h2>
-
-          <span className="task-count">
-            {items.length}
-          </span>
-
-        </div>
-
-      </div>
-
-      <div className="task-list">
-
-        {items.map(task => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
-        ))}
-
-      </div>
-
-    </div>
-  )
-}
-
-// Add / Edit Task Modal
-
-interface AddTaskModalProps {
-  onClose: () => void
-  onSave: (task: Task) => void
-  initialTask: Task | null
-}
-
-function AddTaskModal({
-  onClose,
-  onSave,
-  initialTask
-}: AddTaskModalProps) {
-
-  const [title, setTitle] = useState(
-    initialTask?.title || ''
-  )
-
-  const [description, setDescription] = useState(
-    initialTask?.description || ''
-  )
-
-  const [priority, setPriority] = useState<Task['priority']>(
-    initialTask?.priority || 'Medium'
-  )
-
-  const [date, setDate] = useState('')
-
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-
-    if (!title.trim()) return
-
-    const formattedDate = date
-      ? new Date(date + 'T00:00:00').toLocaleDateString(
-          'en-US',
-          {
-            month: 'short',
-            day: 'numeric'
-          }
-        )
-      : initialTask?.date || 'No date'
-
-    const savedTask: Task = {
-      id: initialTask?.id ?? Date.now(),
-      title: title.trim(),
-      description,
-      priority,
-      date: formattedDate,
-      status: initialTask?.status ?? 'todo'
-    }
-
-    onSave(savedTask)
-    onClose()
-  }
-
-  return (
-    <div className="modal-overlay">
-
-      <div className="modal">
-
-        <h2>
-          {initialTask ? 'Edit Task' : 'Create New Task'}
-        </h2>
-
-        <p className="modal-subtitle">
-          Add or update a task in your workspace.
-        </p>
-
-        <form onSubmit={handleSubmit}>
-
-          <label>Task Title</label>
-
-          <input
-            type="text"
-            placeholder="Enter task title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
-          />
-
-          <label>Description</label>
-
-          <textarea
-            placeholder="Describe your task"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-
-          <label>Priority</label>
-
-          <select
-            value={priority}
-            onChange={(e) =>
-              setPriority(e.target.value as Task['priority'])
-            }
-          >
-            <option value="High">High</option>
-            <option value="Medium">Medium</option>
-            <option value="Low">Low</option>
-          </select>
-
-          <label>Due Date</label>
-
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-
-          <div className="modal-actions">
-
-            <button
-              type="button"
-              className="cancel-btn"
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-
-            <button
-              type="submit"
-              className="submit-btn"
-            >
-              {initialTask ? 'Save Changes' : 'Add Task'}
-            </button>
-
-          </div>
-
-        </form>
-
-      </div>
-
-    </div>
-  )
-}
-
-// Main Application
-
-function App() {
-
-  const [state, dispatch] = useReducer(taskReducer, {
-    tasks: initialTasks
-  })
+const COLUMNS: { title: string; status: TaskStatus; color: 'orange' | 'blue' | 'green' }[] = [
+  { title: 'To Do', status: 'todo', color: 'orange' },
+  { title: 'In Progress', status: 'progress', color: 'blue' },
+  { title: 'Completed', status: 'done', color: 'green' },
+]
+
+export default function App() {
+  const [state, dispatch] = useReducer(taskReducer, { tasks: [] })
   const [isLoaded, setIsLoaded] = useState(false)
-
-  const [showModal, setShowModal] = useState(false)
-
+  const [activePage, setActivePage] = useState('My Board')
   const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [showModal, setShowModal] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [simulateFailure, setSimulateFailure] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionState>('disconnected')
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true)
 
-  const [syncing, setSyncing] = useState(false)
+  // Accessible live announcements
+  const [announcement, setAnnouncement] = useState('')
+  const [isAnnouncementError, setIsAnnouncementError] = useState(false)
+  const announcementTimeoutRef = useRef<number | null>(null)
 
-  // Load tasks from IndexedDB when the app starts
-useEffect(() => {
-  let cancelled = false
+  const stateRef = useRef(state)
+  stateRef.current = state
 
-  async function loadTasks() {
-    try {
-      const savedTasks = await getTasks()
+  const draggedTaskId = useRef<number | null>(null)
+  const isIncomingSync = useRef(false)
 
-      let tasksToLoad = savedTasks
+  const announce = useCallback((message: string, isError = false) => {
+    if (announcementTimeoutRef.current !== null) {
+      clearTimeout(announcementTimeoutRef.current)
+    }
+    setAnnouncement(message)
+    setIsAnnouncementError(isError)
 
-      // Add demo tasks only on the first launch
-      if (
-        savedTasks.length === 0 &&
-        localStorage.getItem('taskflow-initialized') !== 'true'
-      ) {
-        tasksToLoad = initialTasks
-        await saveTasks(initialTasks)
-        localStorage.setItem('taskflow-initialized', 'true')
-      }
+    announcementTimeoutRef.current = window.setTimeout(() => {
+      setAnnouncement('')
+      setIsAnnouncementError(false)
+    }, 4000)
+  }, [])
 
-      if (!cancelled) {
+  // 1. Initial Load from IndexedDB
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadInitialTasks() {
+      try {
+        const savedTasks = await getTasks()
+        if (cancelled) return
+
+        let tasksToLoad = savedTasks
+        if (
+          savedTasks.length === 0 &&
+          localStorage.getItem('taskflow_seeded') !== 'true'
+        ) {
+          tasksToLoad = initialTasks
+          await saveTasks(initialTasks)
+          localStorage.setItem('taskflow_seeded', 'true')
+        }
+
         dispatch({
           type: 'RESTORE_STATE',
-          payload: { tasks: tasksToLoad }
+          payload: { tasks: tasksToLoad },
         })
-
-        setIsLoaded(true)
-      }
-    } catch (error) {
-      console.error('Failed to load tasks:', error)
-      if (!cancelled) {
-        setIsLoaded(true)
+        announce('Workspace tasks loaded from storage.')
+      } catch (error) {
+        console.error('Failed to load tasks from IndexedDB:', error)
+        if (!cancelled) {
+          dispatch({
+            type: 'RESTORE_STATE',
+            payload: { tasks: initialTasks },
+          })
+        }
+      } finally {
+        if (!cancelled) setIsLoaded(true)
       }
     }
-  }
 
-  loadTasks()
+    loadInitialTasks()
 
-  return () => {
-    cancelled = true
-  }
-}, [])
+    return () => {
+      cancelled = true
+    }
+  }, [announce])
 
-// Automatically save tasks whenever they change
-useEffect(() => {
-  if (!isLoaded) return
-
-  saveTasks(state.tasks).catch(error => {
-    console.error('Failed to save tasks:', error)
-  })
-}, [state.tasks, isLoaded])
-
-  // Add or Edit Task
-
-  function saveTask(task: Task) {
-
-    if (editingTask) {
-
-      dispatch({
-        type: 'EDIT_TASK',
-        payload: task
-      })
-
-    } else {
-
-      dispatch({
-        type: 'ADD_TASK',
-        payload: task
-      })
-
+  // 2. Track Browser Online/Offline Status
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true)
+      announce('Internet connection restored. Live sync active.')
+      socket.connect()
     }
 
-    setEditingTask(null)
-  }
+    function handleOffline() {
+      setIsOnline(false)
+      announce('Working offline. All changes are saved locally to IndexedDB.', true)
+    }
 
-  // Delete Task
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
 
-  function deleteTask(id: number) {
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [announce])
 
-    dispatch({
-      type: 'DELETE_TASK',
-      payload: id
+  // 3. WebSocket Real-time Multi-Tab Sync with Auto-Reconnect
+  useEffect(() => {
+    const unsubStatus = socket.onStatusChange(status => {
+      setConnectionStatus(status)
+      if (status === 'connected') {
+        // When connection is established or restored, sync current state
+        socket.send({
+          type: 'TASK_UPDATED',
+          payload: { tasks: stateRef.current.tasks },
+        })
+      }
     })
 
-  }
+    const unsubMessage = socket.onMessage(message => {
+      try {
+        if (message.type === 'TASK_UPDATED' && Array.isArray(message.payload?.tasks)) {
+          isIncomingSync.current = true
+          dispatch({
+            type: 'RESTORE_STATE',
+            payload: { tasks: message.payload.tasks as Task[] },
+          })
+          saveTasks(message.payload.tasks as Task[])
+          announce('Tasks updated in real time from another tab.')
+        }
+      } catch (err) {
+        console.error('Error handling WebSocket sync message:', err)
+      }
+    })
 
-  // Optimistic Update with Rollback
+    return () => {
+      unsubStatus()
+      unsubMessage()
+    }
+  }, [announce])
 
-  async function moveTask(
-    id: number,
-    status: TaskStatus
+  // 4. Save to IndexedDB and Broadcast when State Changes
+  useEffect(() => {
+    if (!isLoaded) return
+
+    // If change came from another tab, avoid echoing it back
+    if (isIncomingSync.current) {
+      isIncomingSync.current = false
+      return
+    }
+
+    // Persist to IndexedDB
+    saveTasks(state.tasks).catch(err => {
+      console.error('IndexedDB auto-save failed:', err)
+    })
+
+    // Broadcast update to other tabs via WebSocket
+    socket.send({
+      type: 'TASK_UPDATED',
+      payload: { tasks: state.tasks },
+    })
+  }, [state.tasks, isLoaded])
+
+  // 5. Optimistic Updates with Rollback
+  async function performOptimisticAction(
+    actionName: string,
+    executeDispatch: () => void,
+    taskTitle: string
   ) {
+    const previousState = stateRef.current
+    setIsSyncing(true)
 
-    const previousState = state
-
-    const task = state.tasks.find(
-      item => item.id === id
-    )
-
-    if (!task || task.status === status) return
-
-    // Update UI immediately
-
-    dispatch({
-      type: 'MOVE_TASK',
-      payload: { id, status }
-    })
-
-    setSyncing(true)
+    // Apply update optimistically to UI immediately
+    executeDispatch()
+    announce(`${taskTitle} (${actionName}). Syncing...`)
 
     try {
-
-      // Simulate server request
-
+      // Simulate sync delay & handle failure if simulation toggle is active
       await new Promise<void>((resolve, reject) => {
-
         setTimeout(() => {
-
-          // 80% success, 20% failure
-
-          if (Math.random() > 0.2) {
-            resolve()
+          if (simulateFailure) {
+            reject(new Error('Simulated network sync failure'))
           } else {
-            reject(new Error('Server request failed'))
+            resolve()
           }
-
-        }, 1000)
-
+        }, 700)
       })
 
-      console.log('Task synchronized successfully')
-
+      setIsSyncing(false)
+      announce(`${taskTitle} synced successfully.`)
     } catch (error) {
-
-      console.error('Task update failed:', error)
-
-      // Restore previous state
-
+      console.warn(`Sync failed for ${actionName}, rolling back:`, error)
+      // Automatic rollback to previous snapshot
       dispatch({
         type: 'RESTORE_STATE',
-        payload: previousState
+        payload: previousState,
       })
+      setIsSyncing(false)
+      announce(
+        `Sync failed! Optimistic update rolled back to previous state.`,
+        true
+      )
+    }
+  }
 
-      alert('Task update failed. Previous state restored.')
+  // Task Actions
+  function handleSaveTask(taskData: Omit<Task, 'id'> & { id?: number }) {
+    if (editingTask && taskData.id) {
+      const updated: Task = {
+        id: taskData.id,
+        title: taskData.title,
+        description: taskData.description,
+        priority: taskData.priority,
+        date: taskData.date,
+        status: taskData.status,
+      }
+      performOptimisticAction(
+        'updated',
+        () => dispatch({ type: 'EDIT_TASK', payload: updated }),
+        `Task "${updated.title}"`
+      )
+    } else {
+      const newTask: Task = {
+        id: Date.now(),
+        title: taskData.title,
+        description: taskData.description,
+        priority: taskData.priority,
+        date: taskData.date,
+        status: taskData.status,
+      }
+      performOptimisticAction(
+        'created',
+        () => dispatch({ type: 'ADD_TASK', payload: newTask }),
+        `Task "${newTask.title}"`
+      )
+    }
+    setEditingTask(null)
+  }
 
-    } finally {
+  function handleDeleteTask(id: number) {
+    const target = state.tasks.find(t => t.id === id)
+    const title = target ? target.title : 'Task'
 
-      setSyncing(false)
-
+    if (!window.confirm(`Are you sure you want to delete "${title}"?`)) {
+      return
     }
 
+    performOptimisticAction(
+      'deleted',
+      () => dispatch({ type: 'DELETE_TASK', payload: id }),
+      `Task "${title}"`
+    )
   }
 
-  // Modal Controls
+  function handleMoveTask(id: number, status: TaskStatus) {
+    const task = state.tasks.find(t => t.id === id)
+    if (!task || task.status === status) return
 
-  function openAddModal() {
-    setEditingTask(null)
-    setShowModal(true)
+    const statusNames: Record<TaskStatus, string> = {
+      todo: 'To Do',
+      progress: 'In Progress',
+      done: 'Completed',
+    }
+
+    performOptimisticAction(
+      `moved to ${statusNames[status]}`,
+      () => dispatch({ type: 'MOVE_TASK', payload: { id, status } }),
+      `Task "${task.title}"`
+    )
   }
 
-  function openEditModal(task: Task) {
-    setEditingTask(task)
-    setShowModal(true)
+  // Drag and Drop
+  function handleDragStart(event: DragEvent<HTMLElement>, id: number) {
+    draggedTaskId.current = id
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(id))
   }
 
-  function closeModal() {
-    setShowModal(false)
-    setEditingTask(null)
+  function handleDrop(event: DragEvent<HTMLElement>, status: TaskStatus) {
+    event.preventDefault()
+    const id =
+      draggedTaskId.current ?? Number(event.dataTransfer.getData('text/plain'))
+
+    if (id) {
+      handleMoveTask(id, status)
+    }
+    draggedTaskId.current = null
   }
 
-  // Filter Tasks
+  // Filter tasks based on active navigation tab
+  const visibleTasks = state.tasks.filter(task => {
+    if (activePage === 'Upcoming') {
+      return task.status !== 'done'
+    }
+    if (activePage === 'Completed') {
+      return task.status === 'done'
+    }
+    return true
+  })
 
-  const todoTasks = state.tasks.filter(
-    task => task.status === 'todo'
-  )
-
-  const progressTasks = state.tasks.filter(
-    task => task.status === 'progress'
-  )
-
-  const doneTasks = state.tasks.filter(
-    task => task.status === 'done'
-  )
-
-  // Dashboard
+  if (!isLoaded) {
+    return (
+      <div className="loading" role="status" aria-live="polite">
+        <div className="spinner" aria-hidden="true" />
+        <p>Loading TaskFlow workspace...</p>
+      </div>
+    )
+  }
 
   return (
-
     <div className="app">
+      <LiveAnnouncer message={announcement} isError={isAnnouncementError} />
 
-      <aside className="sidebar">
+      <Sidebar
+        activePage={activePage}
+        setActivePage={setActivePage}
+        onOpenShortcuts={() => setShowShortcuts(true)}
+      />
 
-        <h1 className="logo">
-          Task<span>Flow.</span>
-        </h1>
+      <main className="main-content" tabIndex={-1}>
+        <Header
+          activePage={activePage}
+          connectionStatus={connectionStatus}
+          isOnline={isOnline}
+          isSyncing={isSyncing}
+          simulateFailure={simulateFailure}
+          onToggleSimulateFailure={() => setSimulateFailure(prev => !prev)}
+          onAddTask={() => {
+            setEditingTask(null)
+            setShowModal(true)
+          }}
+        />
 
-        <p className="nav-label">WORKSPACE</p>
-
-        <div className="nav-item active">
-          ▦ &nbsp; My Board
+        <div className="board" role="region" aria-label="Kanban board columns">
+          {COLUMNS.map(column => {
+            const columnTasks = visibleTasks.filter(
+              t => t.status === column.status
+            )
+            return (
+              <Column
+                key={column.status}
+                title={column.title}
+                status={column.status}
+                color={column.color}
+                tasks={columnTasks}
+                onEdit={task => {
+                  setEditingTask(task)
+                  setShowModal(true)
+                }}
+                onDelete={handleDeleteTask}
+                onMove={handleMoveTask}
+                onDragStart={handleDragStart}
+                onDrop={handleDrop}
+              />
+            )
+          })}
         </div>
-
-        <div className="nav-item">
-          ◷ &nbsp; Upcoming
-        </div>
-
-        <div className="nav-item">
-          ✓ &nbsp; Completed
-        </div>
-
-        <div className="sidebar-bottom">
-
-          <div className="avatar large">VG</div>
-
-          <div>
-            <strong>Vansh Gour</strong>
-            <p>My Workspace</p>
-          </div>
-
-        </div>
-
-      </aside>
-
-      <main className="main-content">
-
-        <header className="topbar">
-
-          <span>Workspace / My Board</span>
-
-          <span className="today">
-            November 2026
-          </span>
-
-        </header>
-
-        <section className="board-header">
-
-          <div>
-
-            <p className="welcome">
-              WELCOME BACK 👋
-            </p>
-
-            <h1>My Tasks</h1>
-
-            <p className="subtitle">
-              Organize your work and get things done.
-            </p>
-
-          </div>
-
-          <div className="board-actions">
-
-            <span className="sync-status">
-              {syncing ? 'Syncing...' : 'All changes saved'}
-            </span>
-
-            <button
-              className="add-task-btn"
-              onClick={openAddModal}
-            >
-              + Add Task
-            </button>
-
-          </div>
-
-        </section>
-
-        <section className="board">
-
-          <Column
-            title="To Do"
-            items={todoTasks}
-            color="orange"
-            status="todo"
-            onEdit={openEditModal}
-            onDelete={deleteTask}
-            onMove={moveTask}
-          />
-
-          <Column
-            title="In Progress"
-            items={progressTasks}
-            color="blue"
-            status="progress"
-            onEdit={openEditModal}
-            onDelete={deleteTask}
-            onMove={moveTask}
-          />
-
-          <Column
-            title="Done"
-            items={doneTasks}
-            color="green"
-            status="done"
-            onEdit={openEditModal}
-            onDelete={deleteTask}
-            onMove={moveTask}
-          />
-
-        </section>
-
       </main>
 
       {showModal && (
-
-        <AddTaskModal
-          onClose={closeModal}
-          onSave={saveTask}
+        <TaskModal
           initialTask={editingTask}
+          onClose={() => {
+            setShowModal(false)
+            setEditingTask(null)
+          }}
+          onSave={handleSaveTask}
         />
-
       )}
 
+      {showShortcuts && (
+        <ShortcutsModal onClose={() => setShowShortcuts(false)} />
+      )}
     </div>
-
   )
 }
-
-export default App

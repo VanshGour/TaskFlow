@@ -60,7 +60,7 @@ self.addEventListener('fetch', event => {
         }
 
         return response
-      } catch (error) {
+      } catch {
         // Use cached application page if navigation fails
         if (request.mode === 'navigate') {
           return (
